@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-playwright
-spacy
-pydantic
-apify-client
-python-dotenv
