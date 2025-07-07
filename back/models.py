@@ -2,20 +2,6 @@ from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, UniqueConst
 from database import Base
 from sqlalchemy.orm import relationship
 
-# class Reviews(Base):
-#     __tablename__ = 'reviews'
-
-#     id = Column(Integer, primary_key=True, index=True)
-#     review_text = Column(String, index=True)
-
-# class Names(Base):
-#     __tablename__ = 'names'
-
-#     id = Column(Integer, primary_key=True, index=True)
-#     name_text = Column(String, index=True)
-#     review_id = Column(Integer, ForeignKey("reviews.id"))
-#     # text = Column(String, ForeignKey("reviews.review_text"))
-
 class Employees(Base):
     __tablename__ = 'employee'
 
