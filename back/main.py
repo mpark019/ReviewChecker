@@ -1,53 +1,31 @@
-import uvicorn
 import re
 import models
-from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from googleReview import fetch_reviews
-from typing import List, Optional, Annotated
 from database import engine, SessionLocal
 from sqlalchemy.orm import Session
-from datetime import date, datetime
+from datetime import date
 from collections import defaultdict
-from sqlalchemy import desc
+from sqlalchemy import desc, func
+from typing import Optional, List
 
-app = FastAPI()
+import slack
+import os
+from dotenv import load_dotenv
+import calendar
 
-# models.Base.metadata.drop_all(bind=engine)
 models.Base.metadata.create_all(bind=engine)
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+load_dotenv()
 
-db_dependency = Annotated[Session, Depends(get_db)]
+TOKEN = os.getenv("SLACK_TOKEN")
+if not TOKEN:
+    raise RuntimeError("SLACK_TOKEN MISSING")
 
-# NAMES = [
-#     "AJ",
-#     "Angelina",
-#     "Averey",
-#     "Avery",
-#     "Cathy",
-#     "Christine",
-#     "Doan",
-#     "Dorothy",
-#     "Ella",
-#     "Emma",
-#     "Isaack",
-#     "Kaylee",
-#     "Lucas",
-#     "Mathew",
-#     "Matthew",
-#     "Mina",
-#     "Quincy",
-#     "Reuben",
-#     "Sissy",
-#     "Victoria",
-#     "Yixin"
-# ]
+
+client = slack.WebClient(TOKEN)
+
+today = date.today()
 
 NAMES = {
     "AJ": ["AJ"],
@@ -76,191 +54,143 @@ alias_to_canon = {
     for canon, variants in NAMES.items()
     for variant in variants
 }
-dateTest = "2025-07-04"
 
 class ReviewsRequest(BaseModel):
     place_url: str = "https://www.google.com/maps/place/Mirai+Arcade/@28.5537855,-81.204756,17z/data=!4m8!3m7!1s0x88e767bc998e5b93:0x9c7c2a15715f540c!8m2!3d28.5537855!4d-81.2021811!9m1!1b1!16s%2Fg%2F11w23m4mqy?hl=en-us&entry=ttu&g_ep=EgoyMDI1MDYyMy4yIKXMDSoASAFQAw%3D%3D"
     max_reviews: int = 100
-    specificDate: Optional[str] = dateTest
+    specificDate: str = today.strftime("%Y-%m-%d")
     specificStar: int = 5
-    names: Optional[List[str]] = NAMES
-    # untilDate: Optional[str] = None
+    names: List[str] = NAMES
 
 class ReviewOut(BaseModel):
     name: str
-    # reviewText: Optional[str]
-    # stars: int
     date: Optional[str]
 
-# @app.post("/api/reviews", response_model=list[ReviewOut])
-# async def get_reviews(req: ReviewsRequest, db: db_dependency):
-#     try:
-#         raw = fetch_reviews(req.place_url, req.max_reviews)
-#     except Exception as e:
-#         raise HTTPException(500, detail=str(e))
-#     if not raw:
-#         raise HTTPException(404, detail="No reviews found")
-#     filtered = raw
-#     if req.specificDate:
-#         filtered = [
-#             rv for rv in raw
-#             if rv.get("publishedAtDate", "").startswith(req.specificDate)
-#         ]
-#     if req.specificStar is not None:
-#         filtered = [
-#             rv for rv in filtered
-#             if rv.get("stars") == req.specificStar
-#         ]
-#     if req.names:
-#         patterns = {
-#             name: re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
-#             for name in req.names
-#         }
-#         filtered = [
-#             rv for rv in filtered
-#             if any(pat.search(rv.get("text", "") or "") for pat in patterns.values())
-#         ]
-#         matched = []
-#         counts_today: dict[str, int] = defaultdict(int)
-#         for rv in filtered:
-#             text = (rv.get("text", "") or "")
-#             for name, pat in patterns.items():
-#                 if pat.search(text):
-#                     matched.append((rv, name))
-#                     counts_today[name] += 1
-#                     break
-#         for name, cnt_value in counts_today.items():
-#             emp = db.query(models.Employees).filter(models.Employees.employee_name == name).first()
-#             if not emp:
-#                 emp = models.Employees(employee_name=name)
-#                 db.add(emp)
-#                 db.commit()
-#                 db.refresh(emp)
-        
-#             daily = db.query(models.Counts).filter(models.Counts.employee_id == emp.id, models.Counts.date == date.today()).first()
-#             if not daily:
-#                 daily = models.Counts(employee_id=emp.id, date=date.today(), count=cnt_value)
-#                 db.add(daily)
-#             else:
-#                 daily.count = cnt_value
-#             db.commit()
-#     return [
-#         ReviewOut(
-#             name = name,
-#             # reviewText=rv.get("text"),
-#             # stars=rv.get("stars"),
-#             date=rv.get("publishedAtDate"),
-#         )
-#         for rv, name in matched
-#     ]
-
-# if __name__ == "__main__":
-#     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
- 
-
-import slack
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
-
-load_dotenv()
-
-TOKEN = os.getenv("SLACK_TOKEN")
-if not TOKEN:
-    raise RuntimeError("Set SLACK_TOKEN in your .env")
-
-
-client = slack.WebClient(TOKEN)
-
-def get_reviews(req: ReviewsRequest, db: db_dependency):
+def get_reviews(req: ReviewsRequest, db: Session):
+    db = SessionLocal()
     try:
-        raw = fetch_reviews(req.place_url, req.max_reviews)
-    except Exception as e:
-        raise HTTPException(500, detail=str(e))
-    if not raw:
-        raise HTTPException(404, detail="No reviews found")
-    filtered = raw
-    if req.specificDate:
-        filtered = [
-            rv for rv in raw
-            if rv.get("publishedAtDate", "").startswith(req.specificDate)
-        ]
-    if req.specificStar is not None:
-        filtered = [
-            rv for rv in filtered
-            if rv.get("stars") == req.specificStar
-        ]
-    if req.names:
-        # patterns = {
-        #     name: re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
-        #     for name in req.names
-        # }
-        patterns = {
-            variant: re.compile(rf"\b{re.escape(variant)}\b", re.IGNORECASE)
-            for variants in NAMES.values()
-            for variant in variants
-        }
-        filtered = [
-            rv for rv in filtered
-            if any(pat.search(rv.get("text", "") or "") for pat in patterns.values())
-        ]
-        matched = []
-        counts_today: dict[str, int] = defaultdict(int)
-        for rv in filtered:
-            text = (rv.get("text", "") or "").lower()
-            # for name, pat in patterns.items():
-            #     if pat.search(text):
-            #         matched.append((rv, name))
-            #         counts_today[name] += 1
-            #         break
-            for variant, pat in patterns.items():
-                if pat.search(text):
-                    canon = alias_to_canon[variant.lower()]
-                    counts_today[canon] += 1
-                    break
-        for name, cnt_value in counts_today.items():
-            emp = db.query(models.Employees).filter(models.Employees.employee_name == name).first()
-            if not emp:
-                emp = models.Employees(employee_name=name)
-                db.add(emp)
+        try:
+            raw = fetch_reviews(req.place_url, req.max_reviews)
+        except Exception as e:
+            raise Exception(500, detail=str(e))
+        if not raw:
+            raise Exception(404, detail="No reviews found")
+        filtered = raw
+        if req.specificDate:
+            filtered = [
+                rv for rv in raw
+                if rv.get("publishedAtDate", "").startswith(req.specificDate)
+            ]
+        if req.specificStar is not None:
+            filtered = [
+                rv for rv in filtered
+                if rv.get("stars") == req.specificStar
+            ]
+        if req.names:
+            patterns = {
+                variant: re.compile(rf"\b{re.escape(variant)}\b", re.IGNORECASE)
+                for variants in NAMES.values()
+                for variant in variants
+            }
+            filtered = [
+                rv for rv in filtered
+                if any(pat.search(rv.get("text", "") or "") for pat in patterns.values())
+            ]
+            matched = []
+            counts_today: dict[str, int] = defaultdict(int)
+            for rv in filtered:
+                text = (rv.get("text", "") or "").lower()
+                for variant, pat in patterns.items():
+                    if pat.search(text):
+                        canon = alias_to_canon[variant.lower()]
+                        counts_today[canon] += 1
+                        break
+            for name, cnt_value in counts_today.items():
+                emp = db.query(models.Employees).filter(models.Employees.employee_name == name).first()
+                if not emp:
+                    emp = models.Employees(employee_name=name)
+                    db.add(emp)
+                    db.commit()
+                    db.refresh(emp)
+            
+                daily = db.query(models.Counts).filter(models.Counts.employee_id == emp.id, models.Counts.date == today).first()
+                if not daily:
+                    daily = models.Counts(employee_id=emp.id, date=today, count=cnt_value)
+                    db.add(daily)
+                else:
+                    daily.count = cnt_value
                 db.commit()
-                db.refresh(emp)
-        
-            daily = db.query(models.Counts).filter(models.Counts.employee_id == emp.id, models.Counts.date == dateTest).first()
-            if not daily:
-                daily = models.Counts(employee_id=emp.id, date=dateTest, count=cnt_value)
-                db.add(daily)
-            else:
-                daily.count = cnt_value
-            db.commit()
+    finally:
+        db.close()
 
-def load_counts(db: db_dependency):
-    return (
-        db.query(
-            models.Employees.employee_name,
-            models.Counts.count
+def load_counts(db: Session):
+    db = SessionLocal()
+    try:
+        return (
+            db.query(
+                models.Employees.employee_name,
+                models.Counts.count
+            )
+            .join (models.Counts, models.Employees.id == models.Counts.employee_id)
+            .filter(models.Counts.date == today)
+            .order_by(desc(models.Counts.count))
+            .all()
         )
-        .join (
-            models.Counts,
-            models.Employees.id == models.Counts.employee_id
+    finally:
+        db.close()
+
+def total_counts(firstDay: int, lastDay: int, year: int, month: int, db: Session):
+    try:
+        date1 = date(year, month, firstDay)
+        date2 = date(year, month, lastDay)
+        return (
+            db.query(
+                models.Employees.employee_name,
+                func.sum(models.Counts.count).label("total_count")
+            )
+            .join(models.Counts, models.Employees.id == models.Counts.employee_id)
+            .filter(models.Counts.date >= date1, models.Counts.date <= date2)
+            .group_by(models.Employees.employee_name)
+            .order_by(desc("total_count"))
+            .all()
         )
-        .filter(models.Counts.date == dateTest)
-        .order_by(desc(models.Counts.count))
-        .all()
-    )
+    finally:
+        db.close()
+
+def endOfMonth(db: Session):
+    db = SessionLocal()
+    try:
+
+        todayYear = today.strftime("%Y")
+        todayMonth = today.strftime("%-m")
+        todayDay = today.strftime("%-d")
+
+        yearInt = int(todayYear)
+        monthInt = int(todayMonth)
+        dayInt = int(todayDay)
+
+        lastDay = calendar.monthrange(yearInt, monthInt)[1]
+
+        if dayInt == lastDay:
+            sumCounts = total_counts(1, lastDay, yearInt, monthInt, db)
+            linesFinal = [f"{name}: {sumCount} review{'s' if sumCount>1 else''}"
+            for name, sumCount in sumCounts]
+            monthDateText = today.strftime("%B %Y")
+            textMonth = f"{monthDateText} Monthly Totals: \n" + "\n".join(linesFinal)
+            client.chat_postMessage(channel='#pigglytest', text=textMonth)
+    finally:
+        db.close()
 
 def main():
     db = SessionLocal()
     try :
         countsInitial = load_counts(db)
         if not countsInitial:
-            # get_reviews(ReviewsRequest(), db)
-            client.chat_postMessage(channel='#pigglytest', text="boing")
+            get_reviews(ReviewsRequest(), db)
 
         counts = load_counts(db)
 
-        writeDate = (date.fromisoformat(dateTest)).strftime("%B %d, %Y")
+        writeDate = today.strftime("%B %d, %Y")
         if not counts:
             text = f"{writeDate}: \n" + "No reviews today"
         else:
@@ -270,6 +200,7 @@ def main():
         
         client.chat_postMessage(channel='#pigglytest', text=text)
 
+        endOfMonth(db)
     finally:
         db.close()
 
