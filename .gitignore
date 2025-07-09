@@ -1,2 +1,4 @@
 .env
-back/.env
+testing.py
+date.py
+bot.py
